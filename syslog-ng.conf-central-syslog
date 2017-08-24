@@ -1,0 +1,142 @@
+@version:3.2
+
+# syslog-ng configuration file.
+#
+# This should behave pretty much like the original syslog on RedHat. But
+# it could be configured a lot smarter.
+#
+# See syslog-ng(8) and syslog-ng.conf(5) for more information.
+#
+
+options {
+	flush-lines (0);
+	time-reopen (10);
+	log-fifo-size (1000);
+	long-hostnames (off);
+	use-dns (no);
+	use-fqdn (no);
+	create-dirs (yes);
+	keep-hostname (yes);
+	ts-format(iso);
+};
+
+source s-sys {
+	file ("/proc/kmsg" program-override("kernel: "));
+	unix-stream ("/dev/log");
+	internal();
+	# udp(ip(0.0.0.0) port(514));
+};
+
+source s-remote {
+	syslog(
+		port(10514),
+		transport(tcp),
+		max-connections(1000)
+	);
+};
+
+destination d-influxdb1 {
+	syslog(
+		"thw-dv-statspoc-01.mydomain.com"
+		port(10514),
+		transport(tcp)
+	);
+};
+
+
+
+destination d-influxdb2 {
+	syslog(
+		"thw-dv-statspoc-02.mydomain.com"
+		port(10514),
+		transport(tcp)
+	);
+};
+destination d-influxdb3 {
+	syslog(
+		"thw-dv-statspoc-03.mydomain.com"
+		port(10514),
+		transport(tcp)
+	);
+};
+
+
+destination d-cons { file("/dev/console"); };
+destination d-mesg { file("/data/syslog/${FULLHOST}/messages-${YEAR}${MONTH}${DAY}"); };
+destination d-auth { file("/data/syslog/${FULLHOST}/secure-${YEAR}${MONTH}${DAY}"); };
+destination d-mail { file("/data/syslog/${FULLHOST}/maillog-${YEAR}${MONTH}${DAY}" flush-lines(10)); };
+destination d-spol { file("/data/syslog/${FULLHOST}/spooler-${YEAR}${MONTH}${DAY}"); };
+destination d-boot { file("/data/syslog/${FULLHOST}/boot.log-${YEAR}${MONTH}${DAY}"); };
+destination d-cron { file("/data/syslog/${FULLHOST}/cron-${YEAR}${MONTH}${DAY}"); };
+destination d-kern { file("/data/syslog/${FULLHOST}/kern-${YEAR}${MONTH}${DAY}"); };
+destination d-mlal { usertty("*"); };
+destination d-firehose { pipe("/var/log/firehose"); };
+
+
+
+
+
+
+
+filter f-kernel     { facility(kern); };
+filter f-default    { level(info..emerg) and
+                        not (facility(mail)
+                        or facility(authpriv) 
+                        or facility(cron)
+			or facility(local6)
+			or facility(local5)
+			or facility(local4)); };
+
+			
+filter f-auth       { facility(authpriv); };
+filter f-mail       { facility(mail); };
+filter f-emergency  { level(emerg); };
+filter f-news       { facility(uucp) or
+                        (facility(news) 
+                        and level(crit..emerg)); };
+filter f-boot   { facility(local7); };
+filter f-cron   { facility(cron); };
+filter f-myfilter1	{ facility(local6); }; #### nginx/php-fpm/app
+filter f-myfilter2	{ facility(local5); }; #### asterisk
+filter f-myfilter3	{ facility(local4); }; #### haproxy
+filter f-influxdb {
+	facility(local4) and not message("is (UP|DOWN)");
+};
+
+filter f-myfilter-tags { match("myfilter" value(".SDATA.tag@511.1")); };
+
+template t-message-only {
+	template("${MESSAGE}\n");
+	template_escape(no);
+};
+
+
+#destination d-myfilter1 { file("/data/syslog/${FULLHOST}/myfilter/${.SDATA.file@18372.4.name}" template(t-message-only));};
+destination d-myfilter1 { file("/data/syslog/${FULLHOST}/myfilter/${.SDATA.file@18372.4.name}-${YEAR}${MONTH}${DAY}" dir_group("devlog") dir_perm(0750) group("devlog") perm(0640));};
+destination d-myfilter2 { file("/data/syslog/${FULLHOST}/myfilter/asterisk-${YEAR}${MONTH}${DAY}" dir_group("astlog") dir_perm(0750) group("astlog") perm(0640));};
+destination d-myfilter3 { file("/data/syslog/${FULLHOST}/myfilter/haproxy-${YEAR}${MONTH}${DAY}${HOUR}" dir_group("devlog") dir_perm(0750) group("devlog") perm(0640));};
+
+
+
+
+log { source(s-sys); filter(f-kernel); destination(d-kern); };
+#log { source(s-sys); filter(f-graph); destination(d-graph); };
+log { source(s-sys); filter(f-auth); destination(d-auth); };
+log { source(s-sys); filter(f-mail); destination(d-mail); };
+log { source(s-sys); filter(f-news); destination(d-spol); };
+log { source(s-sys); filter(f-boot); destination(d-boot); };
+log { source(s-sys); filter(f-cron); destination(d-cron); };
+log { source(s-sys); filter(f-default); destination(d-mesg); };
+
+log { source(s-remote); filter(f-kernel); destination(d-kern); };
+log { source(s-remote); filter(f-myfilter-tags); destination(d-myfilter1); };
+log { source(s-remote); filter(f-myfilter2); destination(d-myfilter2); };
+log { source(s-remote); filter(f-myfilter3); destination(d-myfilter3); };
+log { source(s-remote); filter(f-influxdb); destination(d-influxdb1) ; destination(d-influxdb2);  destination(d-influxdb3) ; };
+log { source(s-remote); filter(f-auth); destination(d-auth); };
+log { source(s-remote); filter(f-mail); destination(d-mail); };
+log { source(s-remote); filter(f-news); destination(d-spol); };
+log { source(s-remote); filter(f-boot); destination(d-boot); };
+log { source(s-remote); filter(f-cron); destination(d-cron); };
+log { source(s-remote); filter(f-default); destination(d-mesg); };
+log { source(s-remote); destination(d-firehose); };

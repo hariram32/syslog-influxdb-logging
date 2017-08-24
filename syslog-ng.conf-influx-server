@@ -1,0 +1,88 @@
+@version: 3.8
+
+source s_local {
+#        system();
+        internal();
+};
+
+source s_network {
+        syslog(
+        port(10514) 
+        transport("tcp")
+        flags(dont-store-legacy-msghdr)
+        );
+
+};
+
+destination d_local {
+        file("/var/log/messages" );
+};
+
+
+destination d_influxdb_http_file {
+        file("/var/log/influxdb_http.in" template("${MSG}\n"));
+};
+
+
+destination d_influxdb_tcp_file {
+        file("/var/log/influxdb_tcp.in" template("${MSG}\n"));
+};
+
+destination d_influxdb_haproxy_httplog {
+        http(
+                url("http://127.0.0.1:8086/write?db=haproxy_httplog&precision=s")
+                method("POST")
+                body("${MSG}")
+        );
+};
+
+
+
+destination d_influxdb_haproxy_tcplog {
+        http(
+                url("http://127.0.0.1:8086/write?db=haproxy_tcplog&precision=s")
+                method("POST")
+                body("${MSG}")
+        );
+};
+
+
+filter f_haproxy {
+        message(".*haproxy.*");
+};
+
+filter f_httplog {
+	message("^(www|api|apip|httplog),frontend.*");
+};
+
+filter f_tcplog {
+	message("^(mysql|redis|tcplog|appjs),frontend.*");
+};
+
+filter f_messages {
+        not message(".*haproxy.*");
+};
+
+log {
+        source(s_local);
+        destination(d_local);
+};
+
+log {
+        source(s_network);
+	filter(f_httplog);
+        destination(d_influxdb_haproxy_httplog);
+	#destination(d_influxdb_http_file);
+};
+
+
+
+
+
+log {
+	source(s_network);
+	filter(f_tcplog);
+	#destination(d_influxdb_tcp_file);
+
+	destination(d_influxdb_haproxy_tcplog);
+};
